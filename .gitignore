@@ -1,0 +1,11 @@
+# Byte-compiled / optimized / DLL files
+*.py[cod]
+
+# Directories
+__pycache__/
+.idea/
+logs/
+logs_old_bad/
+data/
+
+# Files
