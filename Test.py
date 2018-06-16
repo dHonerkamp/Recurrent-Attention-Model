@@ -1,11 +1,10 @@
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from model import RAMNetwork
-from utility import Utility
+from RAM import RAMNetwork
+from utility import Utility, auto_adjust_flags
 from main import store_visualization
 from input_fn import input_fn
-from tensorflow.examples.tutorials.mnist import input_data
 import time
 from tensorflow.python.client import timeline
 
@@ -141,9 +140,8 @@ def test_take_only1Glimpse():
     FLAGS.batch_size = 128
     FLAGS.MC_samples = 10
 
-    FLAGS.dataset = 'MNIST'
-    FLAGS.img_shape = [28,28,1]
-    FLAGS.translated_size = 60
+    FLAGS.dataset = 'omniglot'
+    auto_adjust_flags(FLAGS)
     FLAGS.scale_sizes = [8, 16, 32]
 
     RAM = RAMNetwork(FLAGS=FLAGS,
@@ -246,6 +244,32 @@ def track_time():
         with open(FLAGS.path + '/train/timeline.json', 'w') as f:
             f.write(ctf)
 
+def visual():
+    FLAGS, _ = Utility.parse_arg()
+    FLAGS.batch_size = 128
+    FLAGS.MC_samples = 10
+
+    FLAGS.dataset = 'MNIST'
+    FLAGS.img_shape = [28, 28, 1]
+    FLAGS.translated_size = 0
+    FLAGS.scale_sizes = [8, 16, 32]
+
+    FLAGS.path = FLAGS.summaries_dir + '/Test'
+
+    RAM = RAMNetwork(FLAGS=FLAGS,
+                     patch_shape=len(FLAGS.scale_sizes) * np.power(FLAGS.scale_sizes[0], 2),
+                     num_glimpses=FLAGS.num_glimpses,
+                     batch_size=FLAGS.batch_size * FLAGS.MC_samples,
+                     full_summary=False)
+
+    with tf.Session() as sess:
+        train_handle = sess.run(RAM.train_init_op.string_handle())
+        t = time.time()
+
+        sess.run(tf.global_variables_initializer())
+        store_visualization(sess, "blub", train_handle, FLAGS)
+
+
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -261,5 +285,7 @@ if __name__ == "__main__":
     # track_time()
 
     # translate_data()
+
+    # visual()
 
     print("time elapsed: {:.2f}s".format(time.time() - start_time))

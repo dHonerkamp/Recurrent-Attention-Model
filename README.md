@@ -1,68 +1,74 @@
 # Recurrent Attention Model
 
 ### Overview
-This is my tensorflow implementation of Mnih et al.'s [Recurrent Models of Visual Attention](https://arxiv.org/pdf/1406.6247.pdf). It is trained with a hybrid loss:  
+This is a tensorflow implementation of Mnih et al.'s [Recurrent Models of Visual Attention](https://arxiv.org/pdf/1406.6247.pdf). It is trained with a hybrid loss:  
 - Learn to classify the digits based on the RNN output in a supervised manner.
 - Learn where to look next based on the RNN output. This is non-differentiable and therefore trained by reinforcement learning, using policy gradients (which easily allows to learn continuous actions of (x,y) coordinates).  
-<img src="network.png" height="300" />
+<img src="network.png" height="300" />  
 
-Thanks to [1] (in turn based on [2]) who's implementation provided me with a starting point. After addressing a number of issues, especially regarding the gradient flow, this implementation achieves the original paper's performance in roughly 100 epochs or 2 hours of training on my laptop's Geforce 940MX (for four glimpses). The resulting code is to 95% my own work.
+To run adjust the options in utility.py as needed and then run *main.py*. For cluttered Mnist and omniglot first obtain the data from the sources mentioned in the end and extract them in a folder /data/<dataset>.    
 
+Requirements: tensorflow1.8, argparse, matplotlib, numpy, tqdm
 
 ### Results
-The following was achieved without any extensive hyperparameter search.
 
-28x28 MNIST:
-
-| Model  | Error Mnih et al. | Error this implementation |
+| MNIST  | Error Mnih et al. | Error this |
 | ------------- | ------------- | ------------- |
-| RAM, 2 glimpses, 8 x 8, 1 scale  | 6.27%  | 7.17%  |
-| RAM, 4 glimpses, 8 x 8, 1 scale  | 1.73%  | 1.89%  |
-| RAM, 6 glimpses, 8 x 8, 1 scale  | 1.29%  | 1.57%  |
+| RAM, 2 glimpses, 8 x 8, 1 scale  | 6.27%  | 7.70%  |
+| RAM, 4 glimpses, 8 x 8, 1 scale  | 1.73%  | 1.07%  |
+| RAM, 6 glimpses, 8 x 8, 1 scale  | 1.29%  | 0.67%  |
 
-60x60  Translated MNIST:
-
-| Model  | Error Mnih et al. | Error this implementation |
+| 60x60 Translated MNIST  | Error Mnih et al. | Error this |
 | ------------- | ------------- | ------------- |
-| RAM, 4 glimpses,  8 x  8, 3 scales  | -      | 3.65%  |
-| RAM, 4 glimpses, 12 x 12, 3 scales  | 2.29%  | 3.32%  |
-| RAM, 6 glimpses, 12 x 12, 3 scales  | 1.86%  | -  |
+| RAM, 4 glimpses, 12 x 12, 3 scales  | 2.29%  | 2.30%  |
+| RAM, 6 glimpses, 12 x 12, 3 scales  | 1.86%  | 1.63%  |
 
-<!---
-100x100 Cluttered MNIST:
-
-| Model  | Error Mnih et al. | Error this implementation |
+| 100x100 Cluttered MNIST  | Error Mnih et al. | Error this |
 | ------------- | ------------- | ------------- |
-| RAM, 4 glimpses, 12 x 12, 4 scales  | 14.95%  | -  |
-| RAM, 6 glimpses, 12 x 12, 4 scales  | 11.58%  | -  |
---->
+| RAM, 4 glimpses, 12 x 12, 4 scales  | 14.95%  | 15.14%  |
+| RAM, 6 glimpses, 12 x 12, 4 scales  | 11.58%  | 10.09%  |
+
+| Cifar10  | Accuracy | Details |
+| ------------- | ------------- | ------------- |
+| RAM, 4 glimpse, 8 x 8, 1 scale   |  59.7% | LSTM cell  |
+| RAM, 4 glimpse, 8 x 8, 1 scale   |  66.6% | LSTM cell, Conv. GlimpseNet  |
+| RAM, 6 glimpses, 8 x 8, 1 scale  |  61.6% | LSTM cell  |
+
 
 ### Visualization
-<!---
-![2 glimpses](Results/2glimpses_bs128_MC10_std0.09_decay0.97_step500_lr0.001_lrRL1.0_minLR0.0001_clipped_sample/visualization/epoch_final.png)
-![4 glimpses](Results/4glimpses_bs128_MC10_std0.09_decay0.97_step500_lr0.001_lrRL1.0_minLR0.0001_clipped_sample/visualization/epoch_final.png)
-![6 glimpses](Results/6glimpses_bs128_MC10_std0.09_decay0.97_step500_lr0.001_lrRL0.9_minLR0.0001_clipped_sample/visualization/epoch_final.png)
---->
-2 glimpses: as the first glimpse is random, the model learns to look at the middle  
-<img src="Results/2glimpses_bs128_MC10_std0.09_decay0.97_step500_lr0.001_lrRL1.0_minLR0.0001_clipped_sample/visualization/epoch_final.png" height="1000"/>
-4 glimpses: now we find distinct behaviour depending on what the model has seen  
-<img src="Results/4glimpses_bs128_MC10_std0.09_decay0.97_step500_lr0.001_lrRL1.0_minLR0.0001_clipped_sample/visualization/epoch_final.png" height="1000"/>
-6 glimpses:  
-<img src="Results/6glimpses_bs128_MC10_std0.09_decay0.97_step500_lr0.001_lrRL0.9_minLR0.0001_clipped_sample/visualization/epoch_final.png" height="1000"/>
+Extensive examples of the whole training process [here](Results).
 
-### Observations
+##### MNIST
+6 glimpses:
+<img src="Results/MNIST/6gl_bs90_MC10_std0.09_dcay0.97_step1000_lr0.001_lrRL1_1_sc8_RNN_R1_noTanh/18330_epoch_final.png" height="1000"/>  
+
+##### 100x100 Cluttered MNIST
+4 glimpses:  
+<img src="Results/MNIST_cluttered/4gl_bs90_MC10_std0.09_dcay0.97_step1000_lr0.001_lrRL1_4_sc12_RNN_R1_Tanh/17760_epoch_final.png" height="1000"/>    
+6 glimpses:  
+<img src="Results/MNIST_cluttered/6gl_bs90_MC7_std0.09_dcay0.97_step1000_lr0.001_lrRL1_4_sc12_RNN_R1_Tanh/23976_epoch_27.png" height="1000"/>    
+
+##### 32x32 cifar10
+4 glimpses: it is not able to develop distinct policies and follows the same strategy for each input.  
+<img src="Results/cifar10/4gl_bs128_MC10_std0.09_dcay0.97_step1000_lr0.001_lrRL1_1_sc8_LSTM_R1_Tanh/21840_epoch_final.png" height="1000"/>    
+6 glimpses: it is not able to develop distinct policies and follows the same strategy for each input.  
+<img src="Results/cifar10/6gl_bs128_MC10_std0.09_dcay0.97_step1000_lr0.001_lrRL1_1sc8_LSTM_R1_Tanh/21840_epoch_final.png" height="1000"/>  
+
+
+### Training
 Controlling the gradient flow of the multpiple objectives is essential. We only train the location network by reinforcement learning, core and glimpse network are trained in a supervised manner:
 <img src="gradient_flow.jpg" height="400" />
 
-- The variance of the location policy is an essential hyperparameter. Good values for MNIST seem to be around a standard deviation of 0.1 (for relative image locations ranging from -1 to 1).
-- For 6 glimpses the learning rate of the RL objective should be scaled down a little, otherwise it often learns a bad policy (such as always look at the bottom left) from which it is very hard to discover. This was not the case for e.g. 4 glimpses. But the initial policy is often quite extreme locations as soon as the RNN state is not zero. With more glimpses this policy is more likely to get manifested if enough cases get the right prediction just from the initial glimpse: As the first few plicies are more likely to be bad for later glimpses, a higher number of glimpses gives initially a higher weight to very bad policies.
-- Currently locations are not sampled during inference, but with Monte Carlo Sampling this could be beneficial for inference as well, as we then average over predictions from similar but not identical locations.
+- The variance of the location policy is an essential hyperparameter. Good values for MNIST seem to be around a standard deviation of 0.1.
+- Monte Carlo sampling is used to achieve better approximations of the RL gradients.
+- Using a tanh to squash the locations into normalized [-1, 1] range can offer mild improvements
 
-<!---
+### Computational performance
+A large advantage of *hard attention* is the reduced computational cost, which no longer depends on the input size!
+The complexity scales roughly linear in both the number of glimpses and number of scales per glimpse, as these actions 
+cannot be parallelized. Simple MNIST is trained in less than 30 minutes on my Laptop GPU.
+
 ### Data sources:
-- Cluttered MNIST: https://github.com/deepmind/mnist-cluttered
---->
-
-### References
-[1] https://github.com/jlindsey15/RAM  
-[2] https://github.com/hehefan/Recurrent-Attention-Model
+- Cluttered MNIST: https://github.com/philipperemy/tensorflow-class-activation-mapping/tree/master/data
+- Omniglot: https://github.com/brendenlake/omniglot
+- cifar10: https://www.cs.toronto.edu/~kriz/cifar.html

@@ -1,6 +1,25 @@
-import os
 import argparse
-import numpy as np
+import os
+import tensorflow as tf
+from tensorflow.contrib.layers import xavier_initializer
+
+def auto_adjust_flags(FLAGS):
+    if FLAGS.dataset == "omniglot":
+        FLAGS.img_shape = [105, 105, 1]
+        FLAGS.padding = "zero"
+        FLAGS.open_set = True  # wheter to punish not identifying a unknown image with reward -1
+    if FLAGS.dataset == "MNIST_cluttered":
+        FLAGS.img_shape = [100, 100, 1]
+        FLAGS.padding = "zero"
+        FLAGS.num_classes = 10
+    if FLAGS.dataset == "MNIST":
+        FLAGS.img_shape = [28, 28, 1]
+        FLAGS.padding = "zero"
+        FLAGS.num_classes = 10
+    if FLAGS.dataset == "cifar10":
+        FLAGS.img_shape = [32, 32, 3]
+        FLAGS.padding = "uniform"
+        FLAGS.num_classes = 10
 
 
 class Utility(object):
@@ -24,7 +43,7 @@ class Utility(object):
         parser.add_argument(
             '--data_dir',
             type=str,
-            default='/data/',
+            default='data/',
             help="Where the data is stored")
 
         # parser.add_argument(
@@ -42,7 +61,7 @@ class Utility(object):
         parser.add_argument(
             '--learning_rate_decay_steps',
             type=int,
-            default=500,
+            default=1000,
             help='Decay steps.')
 
         parser.add_argument(
@@ -54,7 +73,7 @@ class Utility(object):
         parser.add_argument(
             '--min_learning_rate',
             type=float,
-            default=0.001,
+            default=0.0001,
             help='Minimal learning rate.')
 
         parser.add_argument(
@@ -72,47 +91,38 @@ class Utility(object):
         parser.add_argument(
             '--MC_samples',
             type=int,
-            default=7,
+            default=10,
             help='Number of Monte Carlo Samples per image.')
 
         parser.add_argument(
             '--num_epochs',
             type=int,
-            default=200,
+            default=70,
             help='Number of training epochs.')
 
-        parser.add_argument(
-            '--img_shape',
-            type=list,
-            default=[100,100,1],
-            help='Image shape (including channels).'
-                 'MNIST: [28,28,1] (even if translated)'
-                 'MNIST_cluttered: [100,100,1]'
-                 'cifar10: [32,32,3]')
+        # parser.add_argument(
+        #     '--img_shape',
+        #     type=list,
+        #     default=[100,100,1],
+        #     help='Image shape (including channels).'
+        #          'MNIST: [28,28,1] (even if translated)'
+        #          'MNIST_cluttered: [100,100,1]'
+        #          'cifar10: [32,32,3]')
 
-        parser.add_argument(
-            '--size_hidden_g',
-            type=int,
-            default=128,
-            help='Hidden features in h_g')
-
-        parser.add_argument(
-            '--size_hidden_l',
-            type=int,
-            default=128,
-            help='Hidden features in h_l')
-
-        parser.add_argument(
-            '--size_hidden_gl2',
-            type=int,
-            default=256,
-            help='Hidden features in gl2 (second fc building on each h_l and h_g)')
 
         parser.add_argument(
             '--size_rnn_state',
             type=int,
-            default=256,
+            default=1024,
             help='Dimensionality of the core networks RNN cell')
+
+        parser.add_argument(
+            '--cell',
+            type=str,
+            default='LSTM',
+            help='RNN cell to use.'
+                 'RNN: cell from Mnih et al. 2014'
+                 'LSTM: LSTM with relu activation')
 
         parser.add_argument(
             '--loc_dim',
@@ -123,7 +133,7 @@ class Utility(object):
         parser.add_argument(
             '--loc_std',
             type=float,
-            default=0.15,
+            default=0.09,
             help='Std used to sample locations. Relative to whole image being in range (-1, 1)')
 
         parser.add_argument(
@@ -131,6 +141,15 @@ class Utility(object):
             type=int,
             default=4,
             help='Number of glimpses the network is allowed to take')
+
+        parser.add_argument(
+            '--resize_method',
+            type=str,
+            default="BILINEAR",
+            help='Method used to downsize the larger retina scales.'
+                 'AVG: average pooling'
+                 'BILINEAR'
+                 'BICUBIC')
 
         parser.add_argument(
             '--max_gradient_norm',
@@ -147,7 +166,7 @@ class Utility(object):
         parser.add_argument(
             '--eval_step_interval',
             type=int,
-            default=1,
+            default=4,
             help='How often to evaluate the training results. In epochs.')
 
         parser.add_argument(
@@ -165,9 +184,9 @@ class Utility(object):
         parser.add_argument(
             '--dataset',
             type=str,
-            default='MNIST_cluttered',
+            default='omniglot',
             help='What dataset to use. See main.get_data(). Atm:'
-                 'MNIST, MNIST_cluttered, cifar10')
+                 'MNIST, MNIST_cluttered, cifar10, omniglot')
 
         parser.add_argument(
             '--translated_size',
@@ -178,12 +197,44 @@ class Utility(object):
         parser.add_argument(
             '--scale_sizes',
             type=list,
-            default=[12, 24, 48, 96],
+            default=[12,24,48],
             help='List of scale dimensionalities used for retina network (size of the glimpses). '
                  'Resolution gets reduced to first glimpses size. '
                  'Should be ordered, smallest to largest scale.'
                  'Following scales must be a multiple of the first.'
                  'Might not work for uneven scale sizes!')
+
+        # parser.add_argument(
+        #     '--padding',
+        #     type=str,
+        #     default="zero",
+        #     help='Padding for the glimpses.'
+        #          'zero, uniform, normal')
+
+        parser.add_argument(
+            '--max_loc_rng',
+            type=float,
+            default=1,
+            help='In what range are the locations allowed to fall? (Max. is -1 to 1)')
+
+        parser.add_argument(
+            '--n_unknown_train',
+            type=int,
+            default=0,
+            help='Currently only for omniglot. Number of alphabets used for unknown label during training')
+
+        parser.add_argument(
+            '--n_unknown_test',
+            type=int,
+            default=2,
+            help='Currently only for omniglot. Completely held out alphabets. '
+                 'Used as test: measure is ration of correctly classified as unknown')
+
+        parser.add_argument(
+            '--open_set',
+            type=bool,
+            default=False,
+            help='Use unknown labels and punish not identifying them. Only omniglot atm.')
 
         parser.add_argument(
             '--start_checkpoint',
@@ -203,6 +254,16 @@ class Utility(object):
         return FLAGS, unparsed
 
 
+def weight_variable(shape, name='w'):
+    return tf.get_variable(name=name,
+                           shape=shape,
+                           initializer=xavier_initializer())
+
+
+def bias_variable(shape, name='b'):
+    return tf.get_variable(name=name,
+                           shape=shape,
+                           initializer=tf.zeros_initializer())
 
 if __name__ == '__main__':
     FLAGS, unparsed = Utility.parse_arg()

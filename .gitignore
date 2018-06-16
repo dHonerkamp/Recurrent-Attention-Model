@@ -7,5 +7,11 @@ __pycache__/
 logs/
 logs_old_bad/
 data/
+Results/OLD/
 
-# Files
+# Tex files
+*.log
+*.aux
+*.out
+.toc
+*.synctex.gz
