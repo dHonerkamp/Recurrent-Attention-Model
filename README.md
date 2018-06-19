@@ -35,6 +35,20 @@ Requirements: tensorflow1.8, argparse, matplotlib, numpy, tqdm
 | RAM, 6 glimpses, 8 x 8, 1 scale  |  61.6% | LSTM cell  |
 
 
+### Training
+Controlling the gradient flow of the multpiple objectives is essential. We only train the location network by reinforcement learning, core and glimpse network are trained in a supervised manner:
+<img src="gradient_flow.jpg" height="400" />
+
+- The variance of the location policy is an essential hyperparameter. Good values for MNIST seem to be around a standard deviation of 0.1.
+- Monte Carlo sampling is used to achieve better approximations of the RL gradients.
+- Using a tanh to squash the locations into normalized [-1, 1] range can offer mild improvements
+
+### Computational performance
+A large advantage of *hard attention* is the reduced computational cost, which no longer depends on the input size but 
+is now only quadratic in the size of the attention window *O(NTnS<sup>2</sup>)* for N observations and T glimpses of 
+n scales with smallest scale S. All the other components have the usual quadratic complexity in the layer size. Simple 
+MNIST is trained in less than 30 minutes on my Laptop GPU.
+
 ### Visualization
 Extensive examples of the whole training process [here](Results).
 
@@ -54,19 +68,6 @@ Extensive examples of the whole training process [here](Results).
 6 glimpses: it is not able to develop distinct policies and follows the same strategy for each input.  
 <img src="Results/cifar10/6gl_bs128_MC10_std0.09_dcay0.97_step1000_lr0.001_lrRL1_1sc8_LSTM_R1_Tanh/21840_epoch_final.png" height="1000"/>  
 
-
-### Training
-Controlling the gradient flow of the multpiple objectives is essential. We only train the location network by reinforcement learning, core and glimpse network are trained in a supervised manner:
-<img src="gradient_flow.jpg" height="400" />
-
-- The variance of the location policy is an essential hyperparameter. Good values for MNIST seem to be around a standard deviation of 0.1.
-- Monte Carlo sampling is used to achieve better approximations of the RL gradients.
-- Using a tanh to squash the locations into normalized [-1, 1] range can offer mild improvements
-
-### Computational performance
-A large advantage of *hard attention* is the reduced computational cost, which no longer depends on the input size!
-The complexity scales roughly linear in both the number of glimpses and number of scales per glimpse, as these actions 
-cannot be parallelized. Simple MNIST is trained in less than 30 minutes on my Laptop GPU.
 
 ### Data sources:
 - Cluttered MNIST: https://github.com/philipperemy/tensorflow-class-activation-mapping/tree/master/data
