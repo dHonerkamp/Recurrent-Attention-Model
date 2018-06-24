@@ -2,9 +2,8 @@ import tensorflow as tf
 import logging
 from RAM import RAMNetwork
 from utility import Utility, auto_adjust_flags
-from main import store_visualization, eval
+from main import visualization, eval
 from input_fn import get_data
-from matplotlib import pyplot as plt
 import numpy as np
 import time
 
@@ -35,9 +34,6 @@ if __name__ == "__main__":
 
     with tf.device('/device:GPU:*'):
         model = RAMNetwork(FLAGS=FLAGS,
-                         patch_shape=len(FLAGS.scale_sizes) * np.power(FLAGS.scale_sizes[0], 2) * FLAGS.img_shape[-1],
-                         num_glimpses=FLAGS.num_glimpses,
-                         batch_size=FLAGS.batch_size * FLAGS.MC_samples,
                          full_summary=False)
 
 
@@ -63,7 +59,7 @@ if __name__ == "__main__":
         # Test set
         eval(model, sess, FLAGS, valid_handle, FLAGS.batches_per_eval_valid, valid_writer, prefix='VALIDATION - LAST MODEL: ')
         eval(model, sess, FLAGS, test_handle, FLAGS.batches_per_eval_test, test_writer, prefix='TEST - LAST MODEL: ')
-        store_visualization(sess, model, 'test_set', test_handle, FLAGS)
+        visualization(sess, model, 'test_set', test_handle, FLAGS)
 
         model.saver.restore(sess, FLAGS.path + "/cp_best.ckpt")
         eval(model, sess, FLAGS, test_handle, FLAGS.batches_per_eval_test, test_writer, prefix='TEST - BEST MODEL: ')

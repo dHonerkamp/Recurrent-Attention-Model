@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.contrib.layers import xavier_initializer
+from tensorflow.contrib.layers import xavier_initializer, flatten
 from input_fn import input_fn
 from Model_modules import RetinaSensor, GlimpseNetwork, GlimpseNetwork_DRAM, LocationNetwork, LocationNetwork_inclLoc, Rewards
 from utility import weight_variable, bias_variable
@@ -74,11 +74,15 @@ class _rnn_cell_RAM(tf.nn.rnn_cell.RNNCell):
 
 
 class RAMNetwork(object):
-    def __init__(self, FLAGS, patch_shape, num_glimpses, batch_size, full_summary=False,):
+    def __init__(self, FLAGS, full_summary=False,):
         '''Input:
         img_shape: [H,W,C]
         '''
         tf.reset_default_graph()
+
+        num_glimpses = FLAGS.num_glimpses
+        self.num_scales = len(FLAGS.scale_sizes)
+        self.patch_shape = [self.num_scales, FLAGS.scale_sizes[0], FLAGS.scale_sizes[0], FLAGS.img_shape[-1]]
 
         with tf.name_scope('Placeholders'):
             self.is_training = tf.placeholder(tf.bool, shape=(), name='is_training')
@@ -122,8 +126,11 @@ class RAMNetwork(object):
             locs_ta      = tf.TensorArray(tf.float32, size=num_glimpses, name='locs_ta')
             loc_means_ta = tf.TensorArray(tf.float32, size=num_glimpses, name='loc_means_ta')
 
+        with tf.variable_scope('RetinaSensor', reuse=tf.AUTO_REUSE):
+            retina_sensor = RetinaSensor(FLAGS)
+
         with tf.variable_scope('GlimpseNetwork', reuse=tf.AUTO_REUSE):
-            glimpse_network = GlimpseNetwork(FLAGS, patch_shape)
+            glimpse_network = GlimpseNetwork(FLAGS, self.patch_shape)
             # keep track of glimpses to visualize
             glimpses_ta = tf.TensorArray(tf.float32, size=num_glimpses, name='glimpses_ta')
 
@@ -140,13 +147,21 @@ class RAMNetwork(object):
 
                 if cell_output is None:  # time == 0
                     with tf.variable_scope('GlimpseNetwork', reuse=True):
-                        loc = tf.random_uniform((batch_size, FLAGS.loc_dim),
-                                                minval=FLAGS.max_loc_rng * -1,
-                                                maxval=FLAGS.max_loc_rng * 1)
+                        # restrict 1st glimpse to be completely inside the image (so that the model should see something)
+                        if FLAGS.dataset == 'omniglot':
+                            rng = tf.cast((tf.reduce_max(FLAGS.img_shape) - FLAGS.scale_sizes[-1]) / tf.reduce_max(FLAGS.img_shape), dtype=tf.float32)
+                        else:
+                            rng = 1.
+                        loc = tf.random_uniform((batch_sz, FLAGS.loc_dim),
+                                                minval=rng * -1.,
+                                                maxval=rng * 1.)
                         loc_mean = loc
 
+                    with tf.variable_scope('RetinaSensor'):
+                        img_patch_flat = retina_sensor(img_NHWC, tf.clip_by_value(loc, -1, 1))
+
                     with tf.variable_scope('GlimpseNetwork', reuse=True):
-                        glimpse, img_patch = glimpse_network(img_NHWC, loc)
+                        glimpse = glimpse_network(img_patch_flat, loc)
 
                     next_cell_state = cell.zero_state(batch_sz, tf.float32)
                     loop_state = output_ta
@@ -157,9 +172,12 @@ class RAMNetwork(object):
                     with tf.variable_scope('LocationNetwork', reuse=True):
                         loc, loc_mean = location_network(cell_output, self.is_training)
 
+                    with tf.variable_scope('RetinaSensor'):
+                        img_patch_flat = retina_sensor(img_NHWC, tf.clip_by_value(loc, -1, 1))
+
                     with tf.variable_scope('GlimpseNetwork', reuse=True):
                         # tf automatically reparametrizes the normal dist., but we don't want to propagate the supervised loss into location
-                        glimpse, img_patch = glimpse_network(img_NHWC, tf.stop_gradient(loc))
+                        glimpse = glimpse_network(img_patch_flat, tf.stop_gradient(loc))
 
                 with tf.name_scope('write_or_finished'):
                     elements_finished = (time >= num_glimpses)
@@ -168,7 +186,7 @@ class RAMNetwork(object):
                     def _write():
                         return (loop_state[0].write(time, loc),
                                 loop_state[1].write(time, loc_mean),
-                                loop_state[2].write(time, img_patch))
+                                loop_state[2].write(time, img_patch_flat))
                     next_loop_state = tf.cond(finished,
                                               lambda: loop_state,
                                               lambda: _write())
@@ -179,7 +197,7 @@ class RAMNetwork(object):
             outputs_ta, final_state, loop_state_ta = tf.nn.raw_rnn(cell, loop_fn)
             rnn_outputs = outputs_ta.stack(name='stack_rnn_outputs')  # [time, batch_sz, num_cell]
 
-        with tf.name_scope('stack_locs'):
+        with tf.name_scope('stack_outputs'):
             self.locs = tf.transpose(loop_state_ta[0].stack(name='stack_locs'), [1,0,2])  # [batch_sz, timesteps, loc_dims]
             loc_means = tf.transpose(loop_state_ta[1].stack(name='stack_loc_means'), [1,0,2])
             self.glimpses = loop_state_ta[2].stack(name='stack_glimpses')
@@ -198,7 +216,7 @@ class RAMNetwork(object):
         with tf.variable_scope('CoreNetwork_preds'):
             fc_pred = tf.layers.Dense(FLAGS.num_classes, kernel_initializer=xavier_initializer(), name='fc_logits')
             logits = fc_pred(rnn_outputs[-1])
-            preds = tf.nn.softmax(logits)
+            self.probabilities = tf.nn.softmax(logits)
             self.prediction = tf.argmax(logits, 1)
 
             # store prediction at each step. Tuple of most likely (class, probability) for each step
@@ -206,7 +224,7 @@ class RAMNetwork(object):
             for i in range(num_glimpses):
                 p = tf.nn.softmax(fc_pred(tf.stop_gradient(rnn_outputs[i])))
                 p_class = tf.argmax(p, 1)
-                idx = tf.transpose([tf.range(batch_size, dtype=tf.int64), p_class])
+                idx = tf.transpose([tf.cast(tf.range(batch_sz), dtype=tf.int64), p_class])
                 self.intermed_preds.append((p_class, tf.gather_nd(p, idx)))
 
         # classification loss
@@ -220,7 +238,7 @@ class RAMNetwork(object):
                 # rewards = tf.concat([tf.zeros([batch_sz, num_glimpses-1], tf.float32), tf.expand_dims(reward, axis=1)],  axis=1)  # [batch_sz, timesteps]
                 # self.returns = tf.cumsum(rewards, axis=1, reverse=True)
                 self.Rewards = Rewards(FLAGS)
-                self.returns, reward, self.accuracy = self.Rewards(self.prediction, y)
+                self.returns, reward, self.unknown_accuracy = self.Rewards(self.prediction, y)
 
             with tf.name_scope('advantages'):
                 # stop_gradient because o/w error from eligibility propagated into baselines.
@@ -260,9 +278,9 @@ class RAMNetwork(object):
 
         # record summaries
         with tf.name_scope('Summaries'):
-            softmax = tf.nn.softmax(logits)
-            softmax = tf.reshape(softmax, [FLAGS.MC_samples, -1, FLAGS.num_classes])
-            avg_pred = tf.reduce_mean(softmax, axis=0)
+            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.prediction, y), tf.float32))
+            probs    = tf.reshape(self.probabilities, [FLAGS.MC_samples, -1, FLAGS.num_classes])
+            avg_pred = tf.reduce_mean(probs, axis=0)
             avg_pred = tf.cast(tf.equal(tf.argmax(avg_pred, 1), self.y), tf.float32)
             self.accuracy_MC = tf.reduce_mean(avg_pred, name='accuracy')
             self.reward = tf.reduce_mean(reward, name='avg_reward')
@@ -271,7 +289,7 @@ class RAMNetwork(object):
             tf.summary.scalar("baseline_mse", self.baselines_mse)
             tf.summary.scalar("RL_loss", self.RL_loss)
             tf.summary.histogram("loglikelihood", tf.reduce_mean(loglik, axis=0)) # zero if not sampling!
-            tf.summary.histogram("softmax_predictions", preds)
+            tf.summary.histogram("softmax_predictions", self.probabilities)
             tf.summary.scalar("accuracy", self.accuracy)
             tf.summary.scalar("accuracy_MC", self.accuracy_MC)
             tf.summary.scalar("reward", self.reward)
@@ -335,9 +353,9 @@ class RAMNetwork(object):
                 paddings.append(padding)
 
 
-            self.glimpses = tf.reshape(self.glimpses, [batch_sz*num_glimpses, -1])
+            self.glimpses_reshpd = tf.reshape(self.glimpses, [batch_sz*num_glimpses, -1])
             glimpse_composed = tf.zeros([batch_sz*num_glimpses, out_sz, out_sz, channel], tf.float32)
-            scales = tf.split(self.glimpses, num_scales, axis=1)
+            scales = tf.split(self.glimpses_reshpd, num_scales, axis=1)
             last_mask = tf.zeros([batch_sz*num_glimpses, out_sz, out_sz, channel])
 
             # to check actual model input. Nesting from out to in: scales, glimpses, batch

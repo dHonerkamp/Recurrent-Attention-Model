@@ -7,16 +7,6 @@ import numpy as np
 from six.moves import urllib
 import tarfile
 
-def cut_data_batch_size(train, valid, test, FLAGS):
-    cut_data = []
-
-    for idx, data in enumerate([train, valid, test]):
-        x, y = data
-        cut = x.shape[0] % FLAGS.batch_size
-        cut_data.append((data[0][:x.shape[0]-cut], data[1][:x.shape[0]-cut]))
-
-    return cut_data
-
 
 def get_cifar(data_dir):
     '''
@@ -102,17 +92,18 @@ def get_data(FLAGS):
 
     elif FLAGS.dataset == "omniglot":
         data_path = os.path.join(data_path, "images_all")
-        alphabets = os.listdir(data_path)
+        alphabets = sorted(os.listdir(data_path))
 
         alphabets_test  = alphabets[:FLAGS.n_unknown_test]
         alphabets_train = alphabets[FLAGS.n_unknown_test:]
+
         if FLAGS.n_unknown_train:
             alphabets_train_unknown = alphabets[FLAGS.n_unknown_test:FLAGS.n_unknown_test+FLAGS.n_unknown_train]
         else:
             alphabets_train_unknown = []
 
         labels = [alpha + "_" + character
-                  if alpha in alphabets_train
+                  if (alpha in alphabets_train) and (alpha not in alphabets_train_unknown)
                   else "unknown"
                   for alpha in alphabets
                   for character in os.listdir(os.path.join(data_path, alpha))]
@@ -133,7 +124,14 @@ def get_data(FLAGS):
         n = len(training)
         val_len = min(int(n * 0.2), 4000)
         np.random.seed(42)
-        idx = np.random.permutation(n)
+        # store permutation as seed does not ensure cross-platform compatibility
+        if FLAGS.start_checkpoint:
+            idx = np.load(FLAGS.path + '/random_idx.npy')
+        else:
+            idx = np.random.permutation(n)
+            os.makedirs(FLAGS.path)  # o/w create from summary writer
+            np.save(FLAGS.path + '/random_idx.npy', idx)
+
         train = training[idx[:-val_len]]
         valid = training[idx[-val_len:]]
 
@@ -150,16 +148,10 @@ def get_data(FLAGS):
                 for name in os.listdir(os.path.join(data_path, alpha, character))]
         test = to_data_tuple(test)
 
-        print("Num labels: ", len(set(labels)))
+        print("Num labels: {}, unknown label: {}".format(len(set(labels)), labels_dict["unknown"]))
         print("Num alphabets train: {}, unknown train: {}, test: {}".
               format(len(alphabets_train), FLAGS.n_unknown_train, len(alphabets_test)))
 
-    # Cut to a multiple of batch_size. Necessary as the data iterator otherwise will return the rest of the data
-    # whenever some observations are left (variable batch size not supported atm).
-    # tf.contrib.data.batch_and_drop_remainder would be another option, but this
-    # would also require to iterators. When deciding which iterator to use with tf.cond(), both will be executed
-    # every time tf.cond() is called.
-    train, valid, test = cut_data_batch_size(train, valid, test, FLAGS)
     print("Obs per dataset: ", len(train[0]), len(valid[0]), len(test[0]))
 
 
@@ -214,7 +206,6 @@ def pipeline(data, FLAGS, shuffle, repeats, preftch=2):
     if FLAGS.dataset in ["MNIST_cluttered", "omniglot"]:
         out_data = out_data.map(parse_fn, num_parallel_calls=4)
     if FLAGS.translated_size:
-        FLAGS.img_shape[0:2] = 2 * [FLAGS.translated_size]
         out_data = out_data.map(translate_fn, num_parallel_calls=4)
 
     out_data = (out_data
@@ -240,6 +231,8 @@ def input_fn(FLAGS):
     # repeats * 2 because also used for visualization etc.
     valid_data = pipeline((features_ph_valid, labels_ph_valid), FLAGS, repeats=tf.cast(tf.ceil(2 * FLAGS.num_epochs / FLAGS.eval_step_interval), tf.int64), shuffle=False)
     test_data  = pipeline((features_ph_test, labels_ph_test), FLAGS, repeats=3, shuffle=False)
+    if FLAGS.translated_size:
+        FLAGS.img_shape[0:2] = 2 * [FLAGS.translated_size]
 
     handle = tf.placeholder(tf.string, shape=[], name='handle')
     iterator = tf.data.Iterator.from_string_handle(handle, tr_data.output_types, tr_data.output_shapes)
