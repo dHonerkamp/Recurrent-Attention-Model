@@ -2,10 +2,9 @@ import tensorflow as tf
 import logging
 from RAM import RAMNetwork
 from utility import Utility, auto_adjust_flags
-from main import visualization, eval
+from main import eval
 from input_fn import get_data
-import numpy as np
-import time
+from Visualization import Visualization
 
 
 if __name__ == "__main__":
@@ -27,39 +26,23 @@ if __name__ == "__main__":
 
     # load datasets
     train_data, valid_data, test_data = get_data(FLAGS)
-    FLAGS.train_data_shape = (train_data[0].shape, train_data[1].shape)
-    FLAGS.valid_data_shape = (valid_data[0].shape, valid_data[1].shape)
-    FLAGS.test_data_shape = (test_data[0].shape, test_data[1].shape)
-    FLAGS.data_dtype = (train_data[0].dtype, train_data[1].dtype)
 
     with tf.device('/device:GPU:*'):
         model = RAMNetwork(FLAGS=FLAGS,
-                         full_summary=False)
-
+                           full_summary=False)
 
     with tf.Session() as sess:
         model.saver.restore(sess, FLAGS.path + "/cp.ckpt")
         start_step = model.global_step.eval(session=sess)
         tf.logging.info('Evaluate model at step: %d ', start_step)
 
-        # train_writer = tf.summary.FileWriter(FLAGS.path + '/train', sess.graph)
-        valid_writer = tf.summary.FileWriter(FLAGS.path + '/valid')
-        test_writer = tf.summary.FileWriter(FLAGS.path + '/test')
-
-        train_handle = sess.run(model.train_init_op.string_handle())
-        valid_handle = sess.run(model.valid_init_op.string_handle())
-        test_handle = sess.run(model.test_init_op.string_handle())
-        sess.run(model.train_init_op.initializer, feed_dict={model.features_ph_train: train_data[0],
-                                                             model.labels_ph_train: train_data[1]})
-        sess.run(model.valid_init_op.initializer, feed_dict={model.features_ph_valid: valid_data[0],
-                                                             model.labels_ph_valid: valid_data[1]})
-        sess.run(model.test_init_op.initializer, feed_dict={model.features_ph_test: test_data[0],
-                                                            model.labels_ph_test: test_data[1]})
+        train_writer, valid_writer, test_writer, train_handle, valid_handle, test_handle = model.setup(sess, train_data, valid_data, test_data)
+        Visual = Visualization(model, FLAGS)
 
         # Test set
         eval(model, sess, FLAGS, valid_handle, FLAGS.batches_per_eval_valid, valid_writer, prefix='VALIDATION - LAST MODEL: ')
         eval(model, sess, FLAGS, test_handle, FLAGS.batches_per_eval_test, test_writer, prefix='TEST - LAST MODEL: ')
-        visualization(sess, model, 'test_set', test_handle, FLAGS)
+        Visual(sess, 'test_set', test_handle)
 
         model.saver.restore(sess, FLAGS.path + "/cp_best.ckpt")
         eval(model, sess, FLAGS, test_handle, FLAGS.batches_per_eval_test, test_writer, prefix='TEST - BEST MODEL: ')

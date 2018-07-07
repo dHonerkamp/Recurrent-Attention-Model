@@ -79,9 +79,9 @@ def get_data(FLAGS):
         labels = np.array(labels, dtype=np.int64)
         FLAGS.num_classes = labels.max() + 1
 
-        train = (filenames[:80001], labels[:80001])
-        valid = (filenames[80001:90001], labels[80001:90001])
-        test =  (filenames[90001:], labels[90001:])
+        train = (filenames[:80000], labels[:80000])
+        valid = (filenames[80000:90000], labels[80000:90000])
+        test =  (filenames[90000:], labels[90000:])
 
     elif FLAGS.dataset == "cifar10":
         (x_train, y_train), test = get_cifar(data_path)# cifar10.load_data()
@@ -154,10 +154,14 @@ def get_data(FLAGS):
 
     print("Obs per dataset: ", len(train[0]), len(valid[0]), len(test[0]))
 
+    FLAGS.train_batches_per_epoch = np.ceil(train[0].shape[0] / FLAGS.batch_size).astype(int)
+    FLAGS.batches_per_eval_valid  = np.ceil(valid[0].shape[0] / FLAGS.batch_size).astype(int)
+    FLAGS.batches_per_eval_test   = np.ceil(test[0].shape[0]  / FLAGS.batch_size).astype(int)
 
-    FLAGS.train_batches_per_epoch = train[0].shape[0] // FLAGS.batch_size
-    FLAGS.batches_per_eval_valid  = valid[0].shape[0] // FLAGS.batch_size
-    FLAGS.batches_per_eval_test   = test[0].shape[0]  // FLAGS.batch_size
+    FLAGS.train_data_shape = (train[0].shape, train[1].shape)
+    FLAGS.valid_data_shape = (valid[0].shape, valid[1].shape)
+    FLAGS.test_data_shape  = (test[0].shape, test[1].shape)
+    FLAGS.data_dtype       = (train[0].dtype, train[1].dtype)
 
     return train, valid, test
 
@@ -204,13 +208,13 @@ def pipeline(data, FLAGS, shuffle, repeats, preftch=2):
                 .shuffle(buffer_size=tf.cast(data[0].shape[0], tf.int64), reshuffle_each_iteration=shuffle)
                 )
     if FLAGS.dataset in ["MNIST_cluttered", "omniglot"]:
-        out_data = out_data.map(parse_fn, num_parallel_calls=4)
+        out_data = out_data.map(parse_fn, num_parallel_calls=FLAGS.num_parallel_preprocess)
     if FLAGS.translated_size:
-        out_data = out_data.map(translate_fn, num_parallel_calls=4)
+        out_data = out_data.map(translate_fn, num_parallel_calls=FLAGS.num_parallel_preprocess)
 
     out_data = (out_data
+                .cache()
                 .batch(FLAGS.batch_size)
-                # .cache()
                 .repeat(repeats)
                 .prefetch(preftch)
                 )
